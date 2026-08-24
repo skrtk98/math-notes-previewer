@@ -107,38 +107,75 @@ function renderDocumentBody(source) {
     headings.push({ level: Number(level), text, id });
     return `<h${level} id="${id}">${content}</h${level}>`;
   });
-  const toc = headings.length > 0
-    ? `<nav class="toc" aria-label="目次"><h2>目次</h2><ul>${headings.map((heading) => `<li class="toc-level-${heading.level}"><a href="#${heading.id}">${heading.text}</a></li>`).join("")}</ul></nav>`
-    : "";
+  const tocNodes = [];
+  const tocStack = [{ level: 0, children: tocNodes }];
+  for (const heading of headings) {
+    while (tocStack.at(-1).level >= heading.level) tocStack.pop();
+    const node = { heading, children: [] };
+    tocStack.at(-1).children.push(node);
+    tocStack.push({ level: heading.level, children: node.children });
+  }
+  const renderTocNodes = (nodes) => nodes.map(({ heading, children }) => {
+    const link = `<a href="#${heading.id}" class="md-toc-link">${heading.text}</a>`;
+    if (children.length === 0) return `<div class="md-toc-link-wrapper" data-level="${heading.level - 1}">${link}</div>`;
+    return `<details open class="md-toc-details"><summary class="md-toc-link-wrapper" data-level="${heading.level - 1}">${link}</summary>${renderTocNodes(children)}</details>`;
+  }).join("");
+  const toc = headings.length > 0 ? `<div class="md-toc" aria-label="目次">${renderTocNodes(tocNodes)}</div>` : "";
   return { body, toc };
 }
 
 async function page(title, body, depth = 0, toc = "") {
   const katexCss = await fs.readFile(new URL("../node_modules/katex/dist/katex.min.css", import.meta.url), "utf8");
   const fontPrefix = "../".repeat(depth);
-  return `<!doctype html>\n<html lang="ja">\n<head>\n<meta charset="utf-8">\n<meta name="viewport" content="width=device-width, initial-scale=1">\n<title>${title}</title>\n<style>${katexCss.replaceAll("url(fonts/", `url(${fontPrefix}fonts/`)}${CSS}</style>\n</head>\n<body><main class="markdown-preview">${toc}${body}</main></body>\n</html>\n`;
+  return `<!doctype html>\n<html lang="ja">\n<head>\n<meta charset="utf-8">\n<meta name="viewport" content="width=device-width, initial-scale=1">\n<title>${title}</title>\n<style>${katexCss.replaceAll("url(fonts/", `url(${fontPrefix}fonts/`)}${CSS}</style>\n</head>\n<body for="html-export"><div class="crossnote markdown-preview">${body}<div class="md-sidebar-toc">${toc}</div></div><a id="sidebar-toc-btn">≡</a><script>var sidebarTOCBtn=document.getElementById("sidebar-toc-btn");sidebarTOCBtn.addEventListener("click",function(event){event.stopPropagation();if(document.body.hasAttribute("html-show-sidebar-toc")){document.body.removeAttribute("html-show-sidebar-toc");}else{document.body.setAttribute("html-show-sidebar-toc",true);}});</script></body>\n</html>\n`;
 }
 
 const CSS = `
-:root { color-scheme: light; font-family: "Source Han Serif", "Noto Serif CJK JP", serif; line-height: 1.8; color: #202124; background: #f7f6f2; }
+html body { font-family: 'Helvetica Neue', Helvetica, 'Segoe UI', Arial, freesans, sans-serif; font-size: 16px; line-height: 1.6; color: #333; background: #fff; overflow: initial; box-sizing: border-box; word-wrap: break-word; }
 body { margin: 0; }
-main { max-width: 56rem; margin: 0 auto; padding: 3rem 1.5rem 6rem; background: #fff; min-height: 100vh; box-sizing: border-box; }
-h1, h2, h3, h4, h5, h6 { line-height: 1.35; margin: 2rem 0 1rem; }
-h1 { border-bottom: 2px solid #303f9f; padding-bottom: .4rem; }
-h2 { border-bottom: 1px solid #c7c9d9; padding-bottom: .25rem; }
-a { color: #283593; } img, svg { max-width: 100%; height: auto; }
-pre { overflow-x: auto; padding: 1rem; background: #f1f3f4; border-radius: .35rem; }
-code { background: #f1f3f4; padding: .1em .25em; border-radius: .2em; }
-blockquote { margin: 1rem 0; padding: .5rem 1rem; border-left: 4px solid #9fa8da; background: #f5f6ff; }
-table { border-collapse: collapse; display: block; overflow-x: auto; } th, td { border: 1px solid #bdbdbd; padding: .35rem .6rem; }
-eq { display: inline; } section { display: block; text-align: center; margin: 1rem 0; }
+html body h1, html body h2, html body h3, html body h4, html body h5, html body h6 { line-height: 1.2; margin-top: 1em; margin-bottom: 16px; color: #000; }
+html body h1 { font-size: 2.25em; font-weight: 300; padding-bottom: .3em; }
+html body h2 { font-size: 1.75em; font-weight: 400; padding-bottom: .3em; }
+html body h3 { font-size: 1.5em; font-weight: 500; } html body h4 { font-size: 1.25em; font-weight: 600; }
+html body h1, html body h2, html body h3, html body h4, html body h5 { font-weight: 600; }
+html body h5 { font-size: 1em; } html body h6 { color: #5c5c5c; }
+html body strong { color: #000; } html body a { color: #08c; text-decoration: none; } html body a:hover { color: #00a3f5; }
+html body img { max-width: 100%; } html body > p { margin-top: 0; margin-bottom: 16px; word-wrap: break-word; }
+html body ol, html body ul { padding-left: 2em; } html body li { margin-bottom: 0; }
+html body blockquote { margin: 16px 0; padding: 0 15px; color: #5c5c5c; background: #f0f0f0; border-left: 4px solid #d6d6d6; }
+html body hr { height: 4px; margin: 32px 0; background: #d6d6d6; border: 0; }
+html body table { margin: 10px 0 15px; border-collapse: collapse; display: block; width: 100%; overflow: auto; }
+html body table td, html body table th { border: 1px solid #d6d6d6; padding: 6px 13px; }
+html body dl { padding: 0; } html body dl dt { padding: 0; margin-top: 16px; font-weight: 700; } html body dl dd { padding: 0 16px; margin-bottom: 16px; }
+html body code { font-family: Menlo, Monaco, Consolas, 'Courier New', monospace; font-size: .85em; color: #000; background: #f0f0f0; border-radius: 3px; padding: .2em 0; }
+html body pre { padding: 1em; overflow: auto; line-height: 1.45; border-radius: 3px; } html body pre code { padding: 0; background: transparent; }
+html body[for="html-export"]:not([data-presentation-mode]) { position: relative; width: 100%; height: 100%; top: 0; left: 0; margin: 0; padding: 0; overflow: auto; }
+html body[for="html-export"]:not([data-presentation-mode]) .markdown-preview { position: relative; top: 0; min-height: 100vh; }
+@media screen and (min-width: 914px) { html body[for="html-export"]:not([data-presentation-mode]) .markdown-preview { padding: 2em calc(50% - 457px + 2em); } }
+@media screen and (max-width: 914px) { html body[for="html-export"]:not([data-presentation-mode]) .markdown-preview { padding: 2em; } }
+@media screen and (max-width: 450px) { html body[for="html-export"]:not([data-presentation-mode]) .markdown-preview { font-size: 14px !important; padding: 1em; } }
+@media print { html body[for="html-export"]:not([data-presentation-mode]) #sidebar-toc-btn { display: none; } }
+html body[for="html-export"]:not([data-presentation-mode]) #sidebar-toc-btn { position: fixed; bottom: 8px; left: 8px; font-size: 28px; cursor: pointer; color: inherit; z-index: 99; width: 32px; text-align: center; opacity: .4; }
+html body[for="html-export"]:not([data-presentation-mode])[html-show-sidebar-toc] #sidebar-toc-btn { opacity: 1; }
+html body[for="html-export"]:not([data-presentation-mode])[html-show-sidebar-toc] .md-sidebar-toc { position: fixed; top: 0; left: 0; width: 300px; height: 100%; padding: 32px 0 48px 0; font-size: 14px; box-shadow: 0 0 4px rgba(150,150,150,.33); box-sizing: border-box; overflow: auto; background-color: inherit; z-index: 98; }
+html body[for="html-export"]:not([data-presentation-mode])[html-show-sidebar-toc] .md-sidebar-toc a { text-decoration: none; }
+html body[for="html-export"]:not([data-presentation-mode])[html-show-sidebar-toc] .md-sidebar-toc .md-toc { padding: 0 16px; }
+html body[for="html-export"]:not([data-presentation-mode])[html-show-sidebar-toc] .md-sidebar-toc .md-toc .md-toc-details { margin: 0; padding: 0; border: none; }
+html body[for="html-export"]:not([data-presentation-mode])[html-show-sidebar-toc] .md-sidebar-toc .md-toc .md-toc-link-wrapper .md-toc-link { display: inline; padding: .25rem 0; }
+html body[for="html-export"]:not([data-presentation-mode])[html-show-sidebar-toc] .md-sidebar-toc .md-toc .md-toc-link-wrapper .md-toc-link div { display: inline; }
+html body[for="html-export"]:not([data-presentation-mode])[html-show-sidebar-toc] .md-sidebar-toc .md-toc .md-toc-link-wrapper[data-level="0"] { padding-left: 0; }
+html body[for="html-export"]:not([data-presentation-mode])[html-show-sidebar-toc] .md-sidebar-toc .md-toc .md-toc-link-wrapper[data-level="1"] { padding-left: 16px; }
+html body[for="html-export"]:not([data-presentation-mode])[html-show-sidebar-toc] .md-sidebar-toc .md-toc .md-toc-link-wrapper[data-level="2"] { padding-left: 32px; }
+html body[for="html-export"]:not([data-presentation-mode])[html-show-sidebar-toc] .md-sidebar-toc .md-toc .md-toc-link-wrapper[data-level="3"] { padding-left: 48px; }
+html body[for="html-export"]:not([data-presentation-mode])[html-show-sidebar-toc] .md-sidebar-toc .md-toc .md-toc-link-wrapper[data-level="4"] { padding-left: 64px; }
+html body[for="html-export"]:not([data-presentation-mode])[html-show-sidebar-toc] .md-sidebar-toc .md-toc .md-toc-link-wrapper[data-level="5"] { padding-left: 80px; }
+html body[for="html-export"]:not([data-presentation-mode])[html-show-sidebar-toc] .markdown-preview { left: 300px; width: calc(100% - 300px); padding: 2em calc(50% - 457px - 150px); margin: 0; box-sizing: border-box; }
+html body[for="html-export"]:not([data-presentation-mode]):not([html-show-sidebar-toc]) .markdown-preview { left: 50%; transform: translateX(-50%); }
+html body[for="html-export"]:not([data-presentation-mode]):not([html-show-sidebar-toc]) .md-sidebar-toc { display: none; }
 .diagram { margin: 1.5rem auto; text-align: center; overflow-x: auto; } .diagram svg { max-height: 28rem; }
-.toc { border: 1px solid #c7c9d9; background: #f5f6ff; padding: .75rem 1.25rem; margin-bottom: 2rem; }
-.toc h2 { font-size: 1.15rem; border: 0; margin: 0 0 .35rem; padding: 0; }
-.toc ul { list-style: none; margin: 0; padding: 0; } .toc li { margin: .15rem 0; }
-.toc .toc-level-2 { margin-left: 1rem; } .toc .toc-level-3 { margin-left: 2rem; }
-.toc .toc-level-4 { margin-left: 3rem; } .toc .toc-level-5 { margin-left: 4rem; } .toc .toc-level-6 { margin-left: 5rem; }
-@media print { :root { background: #fff; } main { max-width: none; padding: 0; } }
+@media screen and (max-width: 1274px) { html body[for="html-export"]:not([data-presentation-mode])[html-show-sidebar-toc] .markdown-preview { padding: 2em; } }
+@media screen and (max-width: 450px) { html body[for="html-export"]:not([data-presentation-mode])[html-show-sidebar-toc] .markdown-preview { width: 100%; } }
+@media print { html body[for="html-export"]:not([data-presentation-mode]) .md-sidebar-toc { display: none; } }
 `;
 
 export async function renderBook(book) {
