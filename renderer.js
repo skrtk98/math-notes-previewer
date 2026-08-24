@@ -139,10 +139,13 @@ function renderDocumentBody(source) {
   return { body, toc };
 }
 
-async function page(title, body, depth = 0, toc = "") {
+async function page(title, body, depth = 0, toc = "", liveReload = false) {
   const katexCss = await fs.readFile(new URL("../node_modules/katex/dist/katex.min.css", import.meta.url), "utf8");
   const fontPrefix = "../".repeat(depth);
-  return `<!doctype html>\n<html lang="ja">\n<head>\n<meta charset="utf-8">\n<meta name="viewport" content="width=device-width, initial-scale=1">\n<title>${title}</title>\n<style>${katexCss.replaceAll("url(fonts/", `url(${fontPrefix}fonts/`)}${CSS}</style>\n</head>\n<body for="html-export"><div class="crossnote markdown-preview">${body}<div class="md-sidebar-toc">${toc}</div></div><a id="sidebar-toc-btn">≡</a><script>var sidebarTOCBtn=document.getElementById("sidebar-toc-btn");sidebarTOCBtn.addEventListener("click",function(event){event.stopPropagation();if(document.body.hasAttribute("html-show-sidebar-toc")){document.body.removeAttribute("html-show-sidebar-toc");}else{document.body.setAttribute("html-show-sidebar-toc",true);}});</script></body>\n</html>\n`;
+  const reloadScript = liveReload
+    ? `<script>(function(){var source=new EventSource("/__preview/events?path="+encodeURIComponent(window.location.pathname));source.onmessage=function(event){var message=JSON.parse(event.data);if(message.path===window.location.pathname){window.location.reload();}};})();</script>`
+    : "";
+  return `<!doctype html>\n<html lang="ja">\n<head>\n<meta charset="utf-8">\n<meta name="viewport" content="width=device-width, initial-scale=1">\n<title>${title}</title>\n<style>${katexCss.replaceAll("url(fonts/", `url(${fontPrefix}fonts/`)}${CSS}</style>\n</head>\n<body for="html-export"><div class="crossnote markdown-preview">${body}<div class="md-sidebar-toc">${toc}</div></div><a id="sidebar-toc-btn">≡</a><script>var sidebarTOCBtn=document.getElementById("sidebar-toc-btn");sidebarTOCBtn.addEventListener("click",function(event){event.stopPropagation();if(document.body.hasAttribute("html-show-sidebar-toc")){document.body.removeAttribute("html-show-sidebar-toc");}else{document.body.setAttribute("html-show-sidebar-toc",true);}});</script>${reloadScript}</body>\n</html>\n`;
 }
 
 const CSS = `
@@ -201,15 +204,48 @@ export async function renderBook(book) {
   return page(book.title, rendered.body, 1, rendered.toc);
 }
 
-async function renderDocument(filename, destination, targetRoot = outputRoot) {
+export async function renderDocument(filename, destination, targetRoot = outputRoot, liveReload = false) {
   const relative = path.relative(manuscriptRoot, filename);
   const source = await readExpanded(filename);
   const withDiagrams = await renderLatexBlocks(normalizeMathSyntax(source));
   const rendered = renderDocumentBody(withDiagrams);
   const depth = path.relative(path.dirname(destination), targetRoot).split(path.sep).length;
   await fs.mkdir(path.dirname(destination), { recursive: true });
-  await fs.writeFile(destination, await page(manuscriptTitle(source, relative), rendered.body, depth, rendered.toc), "utf8");
+  await fs.writeFile(destination, await page(manuscriptTitle(source, relative), rendered.body, depth, rendered.toc, liveReload), "utf8");
   return source;
+}
+
+export function previewDocumentPath(relative) {
+  const normalized = relative.split(path.sep).join("/").replace(/\.md$/, "");
+  return `/manuscripts/${normalized}/`;
+}
+
+export function previewSourcePath(pathname) {
+  const normalized = pathname.replace(/^\/+|\/+$/g, "");
+  if (!normalized.startsWith("manuscripts/") || normalized === "manuscripts") return null;
+  const parts = normalized.split("/").slice(1);
+  if (parts.length === 0) return null;
+  const basename = parts.pop();
+  return path.join(manuscriptRoot, ...parts, `${basename}.md`);
+}
+
+export async function renderPreviewDocument(filename) {
+  const relative = path.relative(manuscriptRoot, filename);
+  const destination = path.join(previewRoot, "manuscripts", relative.replace(/\.md$/, ""), "index.html");
+  await fs.mkdir(path.dirname(destination), { recursive: true });
+  return renderDocument(filename, destination, previewRoot, true);
+}
+
+export async function renderPreviewIndex() {
+  const manuscripts = await discoverManuscripts();
+  const links = [];
+  for (const filename of manuscripts) {
+    const relative = path.relative(manuscriptRoot, filename);
+    const source = await readExpanded(filename);
+    sourceCache.set(filename, source);
+    links.push(`<li><a href="${previewDocumentPath(relative)}">${manuscriptTitle(source, relative)}</a><code>${relative}</code></li>`);
+  }
+  await fs.writeFile(path.join(previewRoot, "index.html"), await page("Markdown manuscripts", `<h1>Markdown manuscripts</h1><p>manuscripts/ 以下の Markdown 原稿一覧</p><ul>${links.join("")}</ul>`, 0, "", true), "utf8");
 }
 
 export async function build(targetRoot = outputRoot, mode = "published") {
@@ -237,14 +273,9 @@ export async function build(targetRoot = outputRoot, mode = "published") {
     await fs.mkdir(path.dirname(destination), { recursive: true });
     const source = await readExpanded(filename);
     sourceCache.set(filename, source);
-    await renderDocument(filename, destination, targetRoot);
+    await renderDocument(filename, destination, targetRoot, true);
   }
-  const links = manuscripts.map((filename) => {
-    const relative = path.relative(manuscriptRoot, filename);
-    const href = `manuscripts/${relative.replace(/\.md$/, "")}/`;
-    return `<li><a href="${href}">${manuscriptTitle(sourceCache.get(filename), relative)}</a><code>${relative}</code></li>`;
-  }).join("");
-  await fs.writeFile(path.join(targetRoot, "index.html"), await page("Markdown manuscripts", `<h1>Markdown manuscripts</h1><p>manuscripts/ 以下の Markdown 原稿一覧</p><ul>${links}</ul>`), "utf8");
+  await renderPreviewIndex();
 }
 
 const sourceCache = new Map();
