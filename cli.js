@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import fs from "node:fs/promises";
 import http from "node:http";
-import { build, books, manuscriptRoot, outputRoot } from "./renderer.js";
+import { build, books, manuscriptRoot, outputRoot, previewRoot } from "./renderer.js";
 
 const command = process.argv[2] ?? "preview";
 if (command === "build" || command === "check") {
@@ -12,12 +12,12 @@ if (command === "build" || command === "check") {
 }
 if (command !== "preview") throw new Error(`Unknown command: ${command}`);
 
-await build();
+await build(previewRoot, "preview");
 const port = Number(process.env.PORT ?? 4173);
 const server = http.createServer(async (request, response) => {
   const requested = decodeURIComponent(new URL(request.url, `http://${request.headers.host}`).pathname);
   const relative = requested === "/" ? "index.html" : requested.replace(/^\//, "");
-  const filename = relative.endsWith("/") ? `${outputRoot}/${relative}index.html` : `${outputRoot}/${relative}`;
+  const filename = relative.endsWith("/") ? `${previewRoot}/${relative}index.html` : `${previewRoot}/${relative}`;
   try {
     const content = await fs.readFile(filename);
     response.writeHead(200, { "content-type": filename.endsWith(".html") ? "text/html; charset=utf-8" : "application/octet-stream" });
@@ -28,6 +28,6 @@ server.listen(port, () => console.log(`Preview: http://localhost:${port}/`));
 const watcher = (await import("node:fs")).watch(manuscriptRoot, { recursive: true });
 for await (const event of watcher) {
   if (!event.filename?.endsWith(".md")) continue;
-  try { await build(); console.log(`Rebuilt after ${event.filename}`); }
+  try { await build(previewRoot, "preview"); console.log(`Rebuilt after ${event.filename}`); }
   catch (error) { console.error(error.message); }
 }

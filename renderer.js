@@ -12,12 +12,28 @@ const execFileAsync = promisify(execFile);
 const root = path.resolve(new URL(".", import.meta.url).pathname, "..");
 const manuscriptRoot = path.join(root, "manuscripts");
 const outputRoot = path.join(root, "site");
+export const previewRoot = path.join(root, "build", "preview-site");
 
 export const books = [
   { source: "Introduction-to-Category-Theory.md", slug: "category-theory", title: "速習圏論" },
   { source: "Introduction-to-Monoidal-Category-Theory.md", slug: "monoidal-category-theory", title: "速習モノイダル圏論" },
   { source: "Introduction-to-Enriched-Categor-over-Monoidal-base-Theory.md", slug: "enriched-category-theory", title: "速習モノイダル基底上の豊穣圏論" },
 ];
+
+async function discoverManuscripts(directory = manuscriptRoot) {
+  const entries = await fs.readdir(directory, { withFileTypes: true });
+  const files = [];
+  for (const entry of entries) {
+    const filename = path.join(directory, entry.name);
+    if (entry.isDirectory()) files.push(...await discoverManuscripts(filename));
+    else if (entry.isFile() && entry.name.endsWith(".md")) files.push(filename);
+  }
+  return files.sort();
+}
+
+function manuscriptTitle(source, relative) {
+  return source.match(/^#\s+(.+)$/m)?.[1]?.trim() ?? relative;
+}
 
 async function readExpanded(filename) {
   const seen = new Set();
@@ -36,6 +52,11 @@ async function readExpanded(filename) {
     return expanded.join("\n");
   }
   return visit(filename);
+}
+
+function normalizeMathSyntax(source) {
+  const inline = source.replace(/\$``([\s\S]*?)``\$/g, "$$$1$");
+  return inline.replace(/^( {0,12})```math\s*\n([\s\S]*?)^\1```\s*$/gm, (_, indent, body) => `\n$$\n${body}\n$$\n`);
 }
 
 async function compileLatex(source, index) {
@@ -77,7 +98,7 @@ function markdown() {
 
 async function page(title, body, depth = 0) {
   const katexCss = await fs.readFile(new URL("../node_modules/katex/dist/katex.min.css", import.meta.url), "utf8");
-  const fontPrefix = depth ? "../" : "";
+  const fontPrefix = "../".repeat(depth);
   return `<!doctype html>\n<html lang="ja">\n<head>\n<meta charset="utf-8">\n<meta name="viewport" content="width=device-width, initial-scale=1">\n<title>${title}</title>\n<style>${katexCss.replaceAll("url(fonts/", `url(${fontPrefix}fonts/`)}${CSS}</style>\n</head>\n<body><main class="markdown-preview">${body}</main></body>\n</html>\n`;
 }
 
@@ -101,20 +122,45 @@ eq { display: inline; } section { display: block; text-align: center; margin: 1r
 export async function renderBook(book) {
   const filename = path.join(manuscriptRoot, book.source);
   const source = await readExpanded(filename);
-  const withDiagrams = await renderLatexBlocks(source);
+  const withDiagrams = await renderLatexBlocks(normalizeMathSyntax(source));
   const html = markdown().render(withDiagrams);
   return page(book.title, html, 1);
 }
 
-export async function build() {
-  await fs.mkdir(outputRoot, { recursive: true });
-  await fs.cp(new URL("../node_modules/katex/dist/fonts", import.meta.url), path.join(outputRoot, "fonts"), { recursive: true });
-  for (const book of books) {
-    const destination = path.join(outputRoot, book.slug, "index.html");
-    await fs.mkdir(path.dirname(destination), { recursive: true });
-    await fs.writeFile(destination, await renderBook(book), "utf8");
+export async function build(targetRoot = outputRoot, mode = "published") {
+  await fs.mkdir(targetRoot, { recursive: true });
+  await fs.cp(new URL("../node_modules/katex/dist/fonts", import.meta.url), path.join(targetRoot, "fonts"), { recursive: true });
+  if (mode === "published") {
+    for (const book of books) {
+      const destination = path.join(targetRoot, book.slug, "index.html");
+      await fs.mkdir(path.dirname(destination), { recursive: true });
+      await fs.writeFile(destination, await renderBook(book), "utf8");
+    }
+    await fs.writeFile(path.join(targetRoot, "index.html"), await page("Category Theory Notes", `<h1>Category Theory Notes</h1><p>圏論とその発展的な話題に関する入門ノートです。</p><ul>${books.map((book) => `<li><a href="${book.slug}/">${book.title}</a></li>`).join("")}</ul>`), "utf8");
+    return;
   }
-  await fs.writeFile(path.join(outputRoot, "index.html"), await page("Category Theory Notes", `<h1>Category Theory Notes</h1><p>圏論とその発展的な話題に関する入門ノートです。</p><ul>${books.map((book) => `<li><a href="${book.slug}/">${book.title}</a></li>`).join("")}</ul>`), "utf8");
+
+  const manuscripts = await discoverManuscripts();
+  for (const filename of manuscripts) {
+    const relative = path.relative(manuscriptRoot, filename);
+    const relativeDirectory = path.dirname(relative);
+    const basename = path.basename(relative, ".md");
+    const destination = path.join(targetRoot, "manuscripts", relativeDirectory, basename, "index.html");
+    await fs.mkdir(path.dirname(destination), { recursive: true });
+    const source = await readExpanded(filename);
+    sourceCache.set(filename, source);
+    const withDiagrams = await renderLatexBlocks(normalizeMathSyntax(source));
+    const depth = path.relative(targetRoot, path.dirname(destination)).split(path.sep).length;
+    await fs.writeFile(destination, await page(manuscriptTitle(source, relative), markdown().render(withDiagrams), depth), "utf8");
+  }
+  const links = manuscripts.map((filename) => {
+    const relative = path.relative(manuscriptRoot, filename);
+    const href = `manuscripts/${relative.replace(/\.md$/, "")}/`;
+    return `<li><a href="${href}">${manuscriptTitle(sourceCache.get(filename), relative)}</a><code>${relative}</code></li>`;
+  }).join("");
+  await fs.writeFile(path.join(targetRoot, "index.html"), await page("Markdown manuscripts", `<h1>Markdown manuscripts</h1><p>manuscripts/ 以下の Markdown 原稿一覧</p><ul>${links}</ul>`), "utf8");
 }
+
+const sourceCache = new Map();
 
 export { manuscriptRoot, outputRoot };
