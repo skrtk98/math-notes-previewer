@@ -97,13 +97,20 @@ function markdown() {
 function renderDocumentBody(source) {
   const rendered = markdown().render(source);
   const headings = [];
+  const sourceHeadings = [...source.matchAll(/^#{1,6}\s+(.+)$/gm)].map((match) => match[1].trim());
   const usedIds = new Map();
   const body = rendered.replace(/<h([1-6])>([\s\S]*?)<\/h\1>/g, (_, level, content) => {
     const text = content.replace(/<[^>]+>/g, "").replace(/&[^;]+;/g, " ").trim();
-    const base = text.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "-").replace(/^-|-$/g, "") || `heading-${headings.length + 1}`;
+    const sourceText = sourceHeadings[headings.length] ?? text;
+    const slugText = sourceText
+      .replace(/\$`([\s\S]*?)`\$/g, "$1")
+      .replace(/\$([^$]+)\$/g, "$1")
+      .replace(/[\\{}]/g, "")
+      .replace(/[`*~]/g, "");
+    const base = slugText.toLowerCase().replace(/[^\p{L}\p{N}_-]+/gu, "-").replace(/^-|-$/g, "") || `heading-${headings.length + 1}`;
     const count = usedIds.get(base) ?? 0;
     usedIds.set(base, count + 1);
-    const id = count ? `${base}-${count + 1}` : base;
+    const id = count ? `${base}-${count}` : base;
     headings.push({ level: Number(level), text, id });
     return `<h${level} id="${id}">${content}</h${level}>`;
   });
