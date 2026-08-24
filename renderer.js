@@ -5,6 +5,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import MarkdownIt from "markdown-it";
 import deflist from "markdown-it-deflist";
+import footnote from "markdown-it-footnote";
 import texmath from "markdown-it-texmath";
 import katex from "katex";
 
@@ -53,8 +54,12 @@ async function readExpanded(filename) {
 }
 
 function normalizeMathSyntax(source) {
-  const inline = source.replace(/\$``([\s\S]*?)``\$/g, "$$$1$");
-  return inline.replace(/^( {0,12})```math\s*\n([\s\S]*?)^\1```\s*$/gm, (_, indent, body) => `\n$$\n${body}\n$$\n`);
+  const inline = source.replace(/\$`([\s\S]*?)`\$/g, "$$$1$");
+  return inline.replace(/^( {0,12})```math\s*\n([\s\S]*?)^\1```\s*$/gm, (_, indent, body) => {
+    const dedented = body.replace(new RegExp(`^${indent}`, "gm"), "");
+    const indented = dedented.split("\n").map((line) => line ? `${indent}${line}` : "").join("\n");
+    return `\n${indent}$$\n${indented}\n${indent}$$\n`;
+  });
 }
 
 async function compileLatex(source, index) {
@@ -89,8 +94,9 @@ async function renderLatexBlocks(source) {
 }
 
 function markdown() {
-  return new MarkdownIt({ html: true, linkify: true, typographer: false })
+  return new MarkdownIt({ html: true, linkify: true, typographer: false, breaks: true })
     .use(deflist)
+    .use(footnote)
     .use(texmath, { engine: katex, delimiters: "dollars", katexOptions: { throwOnError: true, strict: "warn" } });
 }
 
@@ -99,7 +105,9 @@ function renderDocumentBody(source) {
   const headings = [];
   const sourceHeadings = [...source.matchAll(/^#{1,6}\s+(.+)$/gm)].map((match) => match[1].trim());
   const usedIds = new Map();
-  const body = rendered.replace(/<h([1-6])>([\s\S]*?)<\/h\1>/g, (_, level, content) => {
+  const body = rendered
+    .replace(/<section><eqn>([\s\S]*?)<\/eqn><\/section>/g, '<p class="math">$1</p>')
+    .replace(/<h([1-6])>([\s\S]*?)<\/h\1>/g, (_, level, content) => {
     const text = content.replace(/<[^>]+>/g, "").replace(/&[^;]+;/g, " ").trim();
     const sourceText = sourceHeadings[headings.length] ?? text;
     const slugText = sourceText
@@ -111,9 +119,9 @@ function renderDocumentBody(source) {
     const count = usedIds.get(base) ?? 0;
     usedIds.set(base, count + 1);
     const id = count ? `${base}-${count}` : base;
-    headings.push({ level: Number(level), text, id });
+    headings.push({ level: Number(level), text, html: content.replace(/<\/?eq>/g, ""), id });
     return `<h${level} id="${id}">${content}</h${level}>`;
-  });
+    }).replace(/<\/?eq>/g, "");
   const tocNodes = [];
   const tocStack = [{ level: 0, children: tocNodes }];
   for (const heading of headings) {
@@ -123,7 +131,7 @@ function renderDocumentBody(source) {
     tocStack.push({ level: heading.level, children: node.children });
   }
   const renderTocNodes = (nodes) => nodes.map(({ heading, children }) => {
-    const link = `<a href="#${heading.id}" class="md-toc-link">${heading.text}</a>`;
+    const link = `<a href="#${heading.id}" class="md-toc-link">${heading.html}</a>`;
     if (children.length === 0) return `<div class="md-toc-link-wrapper" data-level="${heading.level - 1}">${link}</div>`;
     return `<details open class="md-toc-details"><summary class="md-toc-link-wrapper" data-level="${heading.level - 1}">${link}</summary>${renderTocNodes(children)}</details>`;
   }).join("");
