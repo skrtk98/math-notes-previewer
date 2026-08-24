@@ -14,13 +14,7 @@ const manuscriptRoot = path.join(root, "manuscripts");
 const outputRoot = path.join(root, "site");
 export const previewRoot = path.join(root, "build", "preview-site");
 
-export const books = [
-  { source: "Introduction-to-Category-Theory.md", slug: "category-theory", title: "速習圏論" },
-  { source: "Introduction-to-Monoidal-Category-Theory.md", slug: "monoidal-category-theory", title: "速習モノイダル圏論" },
-  { source: "Introduction-to-Enriched-Categor-over-Monoidal-base-Theory.md", slug: "enriched-category-theory", title: "速習モノイダル基底上の豊穣圏論" },
-];
-
-async function discoverManuscripts(directory = manuscriptRoot) {
+export async function discoverManuscripts(directory = manuscriptRoot) {
   const entries = await fs.readdir(directory, { withFileTypes: true });
   const files = [];
   for (const entry of entries) {
@@ -31,8 +25,12 @@ async function discoverManuscripts(directory = manuscriptRoot) {
   return files.sort();
 }
 
-function manuscriptTitle(source, relative) {
+export function manuscriptTitle(source, relative) {
   return source.match(/^#\s+(.+)$/m)?.[1]?.trim() ?? relative;
+}
+
+function documentSlug(relative) {
+  return path.basename(relative, ".md");
 }
 
 async function readExpanded(filename) {
@@ -96,10 +94,29 @@ function markdown() {
     .use(texmath, { engine: katex, delimiters: "dollars", katexOptions: { throwOnError: true, strict: "warn" } });
 }
 
-async function page(title, body, depth = 0) {
+function renderDocumentBody(source) {
+  const rendered = markdown().render(source);
+  const headings = [];
+  const usedIds = new Map();
+  const body = rendered.replace(/<h([1-6])>([\s\S]*?)<\/h\1>/g, (_, level, content) => {
+    const text = content.replace(/<[^>]+>/g, "").replace(/&[^;]+;/g, " ").trim();
+    const base = text.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "-").replace(/^-|-$/g, "") || `heading-${headings.length + 1}`;
+    const count = usedIds.get(base) ?? 0;
+    usedIds.set(base, count + 1);
+    const id = count ? `${base}-${count + 1}` : base;
+    headings.push({ level: Number(level), text, id });
+    return `<h${level} id="${id}">${content}</h${level}>`;
+  });
+  const toc = headings.length > 0
+    ? `<nav class="toc" aria-label="目次"><h2>目次</h2><ul>${headings.map((heading) => `<li class="toc-level-${heading.level}"><a href="#${heading.id}">${heading.text}</a></li>`).join("")}</ul></nav>`
+    : "";
+  return { body, toc };
+}
+
+async function page(title, body, depth = 0, toc = "") {
   const katexCss = await fs.readFile(new URL("../node_modules/katex/dist/katex.min.css", import.meta.url), "utf8");
   const fontPrefix = "../".repeat(depth);
-  return `<!doctype html>\n<html lang="ja">\n<head>\n<meta charset="utf-8">\n<meta name="viewport" content="width=device-width, initial-scale=1">\n<title>${title}</title>\n<style>${katexCss.replaceAll("url(fonts/", `url(${fontPrefix}fonts/`)}${CSS}</style>\n</head>\n<body><main class="markdown-preview">${body}</main></body>\n</html>\n`;
+  return `<!doctype html>\n<html lang="ja">\n<head>\n<meta charset="utf-8">\n<meta name="viewport" content="width=device-width, initial-scale=1">\n<title>${title}</title>\n<style>${katexCss.replaceAll("url(fonts/", `url(${fontPrefix}fonts/`)}${CSS}</style>\n</head>\n<body><main class="markdown-preview">${toc}${body}</main></body>\n</html>\n`;
 }
 
 const CSS = `
@@ -116,6 +133,11 @@ blockquote { margin: 1rem 0; padding: .5rem 1rem; border-left: 4px solid #9fa8da
 table { border-collapse: collapse; display: block; overflow-x: auto; } th, td { border: 1px solid #bdbdbd; padding: .35rem .6rem; }
 eq { display: inline; } section { display: block; text-align: center; margin: 1rem 0; }
 .diagram { margin: 1.5rem auto; text-align: center; overflow-x: auto; } .diagram svg { max-height: 28rem; }
+.toc { border: 1px solid #c7c9d9; background: #f5f6ff; padding: .75rem 1.25rem; margin-bottom: 2rem; }
+.toc h2 { font-size: 1.15rem; border: 0; margin: 0 0 .35rem; padding: 0; }
+.toc ul { list-style: none; margin: 0; padding: 0; } .toc li { margin: .15rem 0; }
+.toc .toc-level-2 { margin-left: 1rem; } .toc .toc-level-3 { margin-left: 2rem; }
+.toc .toc-level-4 { margin-left: 3rem; } .toc .toc-level-5 { margin-left: 4rem; } .toc .toc-level-6 { margin-left: 5rem; }
 @media print { :root { background: #fff; } main { max-width: none; padding: 0; } }
 `;
 
@@ -123,20 +145,34 @@ export async function renderBook(book) {
   const filename = path.join(manuscriptRoot, book.source);
   const source = await readExpanded(filename);
   const withDiagrams = await renderLatexBlocks(normalizeMathSyntax(source));
-  const html = markdown().render(withDiagrams);
-  return page(book.title, html, 1);
+  const rendered = renderDocumentBody(withDiagrams);
+  return page(book.title, rendered.body, 1, rendered.toc);
+}
+
+async function renderDocument(filename, destination, targetRoot = outputRoot) {
+  const relative = path.relative(manuscriptRoot, filename);
+  const source = await readExpanded(filename);
+  const withDiagrams = await renderLatexBlocks(normalizeMathSyntax(source));
+  const rendered = renderDocumentBody(withDiagrams);
+  const depth = path.relative(path.dirname(destination), targetRoot).split(path.sep).length;
+  await fs.mkdir(path.dirname(destination), { recursive: true });
+  await fs.writeFile(destination, await page(manuscriptTitle(source, relative), rendered.body, depth, rendered.toc), "utf8");
+  return source;
 }
 
 export async function build(targetRoot = outputRoot, mode = "published") {
   await fs.mkdir(targetRoot, { recursive: true });
   await fs.cp(new URL("../node_modules/katex/dist/fonts", import.meta.url), path.join(targetRoot, "fonts"), { recursive: true });
   if (mode === "published") {
-    for (const book of books) {
-      const destination = path.join(targetRoot, book.slug, "index.html");
-      await fs.mkdir(path.dirname(destination), { recursive: true });
-      await fs.writeFile(destination, await renderBook(book), "utf8");
+    const manuscripts = (await discoverManuscripts()).filter((filename) => path.dirname(path.relative(manuscriptRoot, filename)) === ".");
+    const links = [];
+    for (const filename of manuscripts) {
+      const relative = path.relative(manuscriptRoot, filename);
+      const destination = path.join(targetRoot, documentSlug(relative), "index.html");
+      const source = await renderDocument(filename, destination, targetRoot);
+      links.push(`<li><a href="${documentSlug(relative)}/">${manuscriptTitle(source, relative)}</a></li>`);
     }
-    await fs.writeFile(path.join(targetRoot, "index.html"), await page("Category Theory Notes", `<h1>Category Theory Notes</h1><p>圏論とその発展的な話題に関する入門ノートです。</p><ul>${books.map((book) => `<li><a href="${book.slug}/">${book.title}</a></li>`).join("")}</ul>`), "utf8");
+    await fs.writeFile(path.join(targetRoot, "index.html"), await page("Personal Mathematical Documents", `<h1>Personal Mathematical Documents</h1><p>個人的な数学の教科書的資料を含む静的ドキュメント群。</p><ul>${links.join("")}</ul>`), "utf8");
     return;
   }
 
@@ -149,9 +185,7 @@ export async function build(targetRoot = outputRoot, mode = "published") {
     await fs.mkdir(path.dirname(destination), { recursive: true });
     const source = await readExpanded(filename);
     sourceCache.set(filename, source);
-    const withDiagrams = await renderLatexBlocks(normalizeMathSyntax(source));
-    const depth = path.relative(targetRoot, path.dirname(destination)).split(path.sep).length;
-    await fs.writeFile(destination, await page(manuscriptTitle(source, relative), markdown().render(withDiagrams), depth), "utf8");
+    await renderDocument(filename, destination, targetRoot);
   }
   const links = manuscripts.map((filename) => {
     const relative = path.relative(manuscriptRoot, filename);

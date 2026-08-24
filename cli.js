@@ -1,12 +1,12 @@
 #!/usr/bin/env node
 import fs from "node:fs/promises";
 import http from "node:http";
-import { build, books, manuscriptRoot, outputRoot, previewRoot } from "./renderer.js";
+import { build, discoverManuscripts, manuscriptRoot, previewRoot } from "./renderer.js";
 
 const command = process.argv[2] ?? "preview";
 if (command === "build" || command === "check") {
   await build();
-  if (command === "check") console.log(`Rendered ${books.length} books successfully.`);
+  if (command === "check") console.log(`Rendered ${(await discoverManuscripts(manuscriptRoot)).filter((filename) => !filename.includes("/contents/")).length} published documents successfully.`);
   else console.log("Generated site/.");
   process.exit(0);
 }
