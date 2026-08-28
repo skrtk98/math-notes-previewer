@@ -1,4 +1,5 @@
 import fs from "node:fs/promises";
+import { existsSync } from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { execFile } from "node:child_process";
@@ -32,6 +33,30 @@ export function manuscriptTitle(source, relative) {
 
 function documentSlug(relative) {
   return path.basename(relative, ".md");
+}
+
+function isIndexManuscript(relative) {
+  return path.basename(relative) === "index.md";
+}
+
+function publishedDocumentSlug(relative) {
+  return isIndexManuscript(relative) ? path.basename(path.dirname(relative)) : documentSlug(relative);
+}
+
+async function discoverPublishedManuscripts(directory = manuscriptRoot) {
+  const entries = await fs.readdir(directory, { withFileTypes: true });
+  const files = [];
+  for (const entry of entries) {
+    const filename = path.join(directory, entry.name);
+    if (entry.isDirectory()) {
+      const index = path.join(filename, "index.md");
+      if (existsSync(index)) files.push(index);
+      else files.push(...await discoverPublishedManuscripts(filename));
+    } else if (directory === manuscriptRoot && entry.isFile() && entry.name.endsWith(".md")) {
+      files.push(filename);
+    }
+  }
+  return files.sort();
 }
 
 async function readExpanded(filename) {
@@ -217,6 +242,10 @@ export async function renderDocument(filename, destination, targetRoot = outputR
 
 export function previewDocumentPath(relative) {
   const normalized = relative.split(path.sep).join("/").replace(/\.md$/, "");
+  if (isIndexManuscript(relative)) {
+    const directory = path.posix.dirname(normalized);
+    return `/manuscripts/${directory === "." ? "" : `${directory}/`}`;
+  }
   return `/manuscripts/${normalized}/`;
 }
 
@@ -225,13 +254,16 @@ export function previewSourcePath(pathname) {
   if (!normalized.startsWith("manuscripts/") || normalized === "manuscripts") return null;
   const parts = normalized.split("/").slice(1);
   if (parts.length === 0) return null;
+  const directory = path.join(manuscriptRoot, ...parts);
+  if (existsSync(path.join(directory, "index.md"))) return path.join(directory, "index.md");
   const basename = parts.pop();
   return path.join(manuscriptRoot, ...parts, `${basename}.md`);
 }
 
 export async function renderPreviewDocument(filename) {
   const relative = path.relative(manuscriptRoot, filename);
-  const destination = path.join(previewRoot, "manuscripts", relative.replace(/\.md$/, ""), "index.html");
+  const relativeDirectory = isIndexManuscript(relative) ? path.dirname(relative) : relative.replace(/\.md$/, "");
+  const destination = path.join(previewRoot, "manuscripts", relativeDirectory, "index.html");
   await fs.mkdir(path.dirname(destination), { recursive: true });
   return renderDocument(filename, destination, previewRoot, true);
 }
@@ -252,13 +284,13 @@ export async function build(targetRoot = outputRoot, mode = "published") {
   await fs.mkdir(targetRoot, { recursive: true });
   await fs.cp(new URL("../node_modules/katex/dist/fonts", import.meta.url), path.join(targetRoot, "fonts"), { recursive: true });
   if (mode === "published") {
-    const manuscripts = (await discoverManuscripts()).filter((filename) => path.dirname(path.relative(manuscriptRoot, filename)) === ".");
+    const manuscripts = await discoverPublishedManuscripts();
     const links = [];
     for (const filename of manuscripts) {
       const relative = path.relative(manuscriptRoot, filename);
-      const destination = path.join(targetRoot, documentSlug(relative), "index.html");
+      const destination = path.join(targetRoot, publishedDocumentSlug(relative), "index.html");
       const source = await renderDocument(filename, destination, targetRoot);
-      links.push(`<li><a href="${documentSlug(relative)}/">${manuscriptTitle(source, relative)}</a></li>`);
+      links.push(`<li><a href="${publishedDocumentSlug(relative)}/">${manuscriptTitle(source, relative)}</a></li>`);
     }
     await fs.writeFile(path.join(targetRoot, "index.html"), await page("Personal Mathematical Documents", `<h1>Personal Mathematical Documents</h1><p>個人的な数学の教科書的資料を含む静的ドキュメント群。</p><ul>${links.join("")}</ul>`), "utf8");
     return;
