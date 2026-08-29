@@ -283,6 +283,10 @@ export async function renderPreviewIndex() {
 export async function build(targetRoot = outputRoot, mode = "published") {
   await fs.mkdir(targetRoot, { recursive: true });
   await fs.cp(new URL("../node_modules/katex/dist/fonts", import.meta.url), path.join(targetRoot, "fonts"), { recursive: true });
+  if (mode === "preview") {
+    await renderPreviewIndex();
+    return;
+  }
   if (mode === "published") {
     const manuscripts = await discoverPublishedManuscripts();
     const links = [];

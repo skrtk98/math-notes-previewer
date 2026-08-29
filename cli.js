@@ -16,6 +16,27 @@ if (command !== "preview") throw new Error(`Unknown command: ${command}`);
 await build(previewRoot, "preview");
 const port = Number(process.env.PORT ?? 4173);
 const clients = new Set();
+const renderedPaths = new Set();
+const renderingPaths = new Map();
+
+async function ensurePreviewDocument(pathname) {
+  const source = previewSourcePath(pathname);
+  if (!source) return null;
+  try { await fs.access(source); }
+  catch { return null; }
+  if (renderedPaths.has(pathname)) return source;
+  if (!renderingPaths.has(pathname)) {
+    renderingPaths.set(pathname, renderPreviewDocument(source).then(() => {
+      renderedPaths.add(pathname);
+      renderingPaths.delete(pathname);
+    }).catch((error) => {
+      renderingPaths.delete(pathname);
+      throw error;
+    }));
+  }
+  await renderingPaths.get(pathname);
+  return source;
+}
 
 function notify(pathname) {
   for (const client of clients) {
@@ -51,6 +72,12 @@ const server = http.createServer(async (request, response) => {
     request.on("close", () => clients.delete(client));
     return;
   }
+  try { await ensurePreviewDocument(requested); }
+  catch (error) {
+    response.writeHead(500, { "content-type": "text/plain; charset=utf-8" });
+    response.end(error.message);
+    return;
+  }
   const relative = requested === "/" ? "index.html" : requested.replace(/^\//, "");
   const filename = relative.endsWith("/") ? `${previewRoot}/${relative}index.html` : `${previewRoot}/${relative}`;
   try {
@@ -64,6 +91,7 @@ const watcher = (await import("node:fs")).watch(manuscriptRoot, { recursive: tru
 for await (const event of watcher) {
   if (!event.filename?.endsWith(".md")) continue;
   const changed = path.resolve(manuscriptRoot, event.filename);
+  renderedPaths.clear();
   const activePaths = [...new Set([...clients].map((client) => client.path))];
   for (const pagePath of activePaths) {
     try {
@@ -76,6 +104,7 @@ for await (const event of watcher) {
       const source = previewSourcePath(pagePath);
       if (!source || !(await dependsOn(source, changed))) continue;
       await renderPreviewDocument(source);
+      renderedPaths.add(pagePath);
       notify(pagePath);
       console.log(`Rebuilt ${pagePath} after ${event.filename}`);
     } catch (error) { console.error(error.message); }
