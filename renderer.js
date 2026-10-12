@@ -9,6 +9,7 @@ import deflist from "markdown-it-deflist";
 import footnote from "markdown-it-footnote";
 import texmath from "markdown-it-texmath";
 import katex from "katex";
+import { renderHomepage } from "./homepage.js";
 
 const execFileAsync = promisify(execFile);
 const root = path.resolve(new URL(".", import.meta.url).pathname, "..");
@@ -289,14 +290,14 @@ export async function build(targetRoot = outputRoot, mode = "published") {
   }
   if (mode === "published") {
     const manuscripts = await discoverPublishedManuscripts();
-    const links = [];
+    const documents = [];
     for (const filename of manuscripts) {
       const relative = path.relative(manuscriptRoot, filename);
       const destination = path.join(targetRoot, publishedDocumentSlug(relative), "index.html");
       const source = await renderDocument(filename, destination, targetRoot);
-      links.push(`<li><a href="${publishedDocumentSlug(relative)}/">${manuscriptTitle(source, relative)}</a></li>`);
+      documents.push({ slug: publishedDocumentSlug(relative), title: manuscriptTitle(source, relative) });
     }
-    await fs.writeFile(path.join(targetRoot, "index.html"), await page("Personal Mathematical Documents", `<h1>Personal Mathematical Documents</h1><p>個人的な数学の教科書的資料を含む静的ドキュメント群。</p><ul>${links.join("")}</ul>`), "utf8");
+    await fs.writeFile(path.join(targetRoot, "index.html"), await renderHomepage(documents), "utf8");
     return;
   }
 
