@@ -1,0 +1,5 @@
+node_modules/
+
+# Local editor and operating-system files
+.DS_Store
+.vscode/

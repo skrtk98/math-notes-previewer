@@ -1,0 +1,43 @@
+name: Deploy GitHub Pages
+
+# Reusable workflow for manuscript repositories.
+# The caller grants pages: write and id-token: write.
+on:
+  workflow_call:
+
+jobs:
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the manuscripts
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install previewer dependencies
+        run: npm ci
+
+      - name: Install LaTeX tools for TikZ diagrams
+        run: sudo apt-get update && sudo apt-get install -y dvisvgm texlive-latex-extra texlive-pictures
+
+      - name: Build the site
+        run: npm run build
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload site artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

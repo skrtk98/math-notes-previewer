@@ -3,16 +3,18 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { execFile } from "node:child_process";
+import { createRequire } from "node:module";
 import { promisify } from "node:util";
 import MarkdownIt from "markdown-it";
 import deflist from "markdown-it-deflist";
 import footnote from "markdown-it-footnote";
 import texmath from "markdown-it-texmath";
 import katex from "katex";
-import { renderHomepage } from "./homepage.js";
 
 const execFileAsync = promisify(execFile);
-const root = path.resolve(new URL(".", import.meta.url).pathname, "..");
+// Manuscripts are read from the repository that runs the CLI, not from this package.
+const root = process.cwd();
+const katexRoot = path.dirname(createRequire(import.meta.url).resolve("katex/package.json"));
 const manuscriptRoot = path.join(root, "manuscripts");
 const outputRoot = path.join(root, "site");
 export const previewRoot = path.join(root, "build", "preview-site");
@@ -40,7 +42,9 @@ function isIndexManuscript(relative) {
   return path.basename(relative) === "index.md";
 }
 
+// manuscripts/index.md becomes the top page of the repository's site.
 function publishedDocumentSlug(relative) {
+  if (relative === "index.md") return "";
   return isIndexManuscript(relative) ? path.basename(path.dirname(relative)) : documentSlug(relative);
 }
 
@@ -166,7 +170,7 @@ function renderDocumentBody(source) {
 }
 
 async function page(title, body, depth = 0, toc = "", liveReload = false) {
-  const katexCss = await fs.readFile(new URL("../node_modules/katex/dist/katex.min.css", import.meta.url), "utf8");
+  const katexCss = await fs.readFile(path.join(katexRoot, "dist", "katex.min.css"), "utf8");
   const fontPrefix = "../".repeat(depth);
   const reloadScript = liveReload
     ? `<script>(function(){var source=new EventSource("/__preview/events?path="+encodeURIComponent(window.location.pathname));source.onmessage=function(event){var message=JSON.parse(event.data);if(message.path===window.location.pathname){window.location.reload();}};})();</script>`
@@ -235,7 +239,8 @@ export async function renderDocument(filename, destination, targetRoot = outputR
   const source = await readExpanded(filename);
   const withDiagrams = await renderLatexBlocks(normalizeMathSyntax(source));
   const rendered = renderDocumentBody(withDiagrams);
-  const depth = path.relative(path.dirname(destination), targetRoot).split(path.sep).length;
+  const upward = path.relative(path.dirname(destination), targetRoot);
+  const depth = upward ? upward.split(path.sep).length : 0;
   await fs.mkdir(path.dirname(destination), { recursive: true });
   await fs.writeFile(destination, await page(manuscriptTitle(source, relative), rendered.body, depth, rendered.toc, liveReload), "utf8");
   return source;
@@ -252,7 +257,11 @@ export function previewDocumentPath(relative) {
 
 export function previewSourcePath(pathname) {
   const normalized = pathname.replace(/^\/+|\/+$/g, "");
-  if (!normalized.startsWith("manuscripts/") || normalized === "manuscripts") return null;
+  if (normalized === "manuscripts") {
+    const index = path.join(manuscriptRoot, "index.md");
+    return existsSync(index) ? index : null;
+  }
+  if (!normalized.startsWith("manuscripts/")) return null;
   const parts = normalized.split("/").slice(1);
   if (parts.length === 0) return null;
   const directory = path.join(manuscriptRoot, ...parts);
@@ -283,7 +292,7 @@ export async function renderPreviewIndex() {
 
 export async function build(targetRoot = outputRoot, mode = "published") {
   await fs.mkdir(targetRoot, { recursive: true });
-  await fs.cp(new URL("../node_modules/katex/dist/fonts", import.meta.url), path.join(targetRoot, "fonts"), { recursive: true });
+  await fs.cp(path.join(katexRoot, "dist", "fonts"), path.join(targetRoot, "fonts"), { recursive: true });
   if (mode === "preview") {
     await renderPreviewIndex();
     return;
@@ -297,7 +306,10 @@ export async function build(targetRoot = outputRoot, mode = "published") {
       const source = await renderDocument(filename, destination, targetRoot);
       documents.push({ slug: publishedDocumentSlug(relative), title: manuscriptTitle(source, relative) });
     }
-    await fs.writeFile(path.join(targetRoot, "index.html"), await renderHomepage(documents), "utf8");
+    if (!documents.some(({ slug }) => slug === "")) {
+      const links = documents.map(({ slug, title }) => `<li><a href="${encodeURIComponent(slug)}/">${title}</a></li>`);
+      await fs.writeFile(path.join(targetRoot, "index.html"), await page("原稿一覧", `<h1>原稿一覧</h1><ul>${links.join("")}</ul>`), "utf8");
+    }
     return;
   }
 

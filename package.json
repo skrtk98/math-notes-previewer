@@ -1,12 +1,16 @@
 {
-  "name": "category-theory-notes-site",
-  "private": true,
+  "name": "math-notes-previewer",
+  "version": "1.0.0",
+  "description": "Markdown、KaTeX、TikZ で書いた数学の原稿を HTML に変換する CLI とブラウザプレビューワー",
   "type": "module",
-  "scripts": {
-    "build": "node previewer/cli.js build",
-    "preview": "node previewer/cli.js preview",
-    "check": "node previewer/cli.js check"
+  "bin": {
+    "math-notes": "cli.js"
   },
+  "files": [
+    "cli.js",
+    "renderer.js",
+    "THIRD_PARTY_LICENSES.md"
+  ],
   "dependencies": {
     "katex": "^0.16.22",
     "markdown-it": "^14.1.0",
