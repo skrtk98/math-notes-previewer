@@ -30,7 +30,7 @@ CLI は実行したディレクトリをリポジトリのルートとして扱�
     "check": "math-notes check"
   },
   "dependencies": {
-    "math-notes-previewer": "github:skrtk98/math-notes-previewer#v1.0.0"
+    "math-notes-previewer": "git+https://github.com/skrtk98/math-notes-previewer.git#v1.0.0"
   }
 }
 ```
